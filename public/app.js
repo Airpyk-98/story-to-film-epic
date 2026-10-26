@@ -876,26 +876,30 @@ async function verifyAndEnsureHfDataset(silent = false) {
   }
 
   try {
-    try {
-      const { createRepo } = await getHfHubModule();
-      await createRepo({
-        repo: { type: "dataset", name: repoId },
-        accessToken: hfToken,
-        private: false
-      });
-    } catch (err) {
-      // 409 Conflict means the dataset already exists on the user's account
-      if (!String(err.message || err).includes("409") && !String(err.message || err).toLowerCase().includes("already")) {
-        // Fallback to Relay
-        for (const base of getRelayBaseUrls()) {
-          const r = await fetch(`${base}/api/hf/ensure-dataset`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ hf_username: hfUser, hf_token: hfToken, dataset_name: dsName })
-          });
-          if (r.ok) break;
+    let ensured = false;
+    for (const base of getRelayBaseUrls()) {
+      try {
+        const r = await fetch(`${base}/api/hf/ensure-dataset`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hf_username: hfUser, hf_token: hfToken, dataset_name: dsName })
+        });
+        if (r.ok) {
+          ensured = true;
+          break;
         }
-      }
+      } catch (_) {}
+    }
+
+    if (!ensured) {
+      try {
+        const { createRepo } = await getHfHubModule();
+        await createRepo({
+          repo: { type: "dataset", name: repoId },
+          credentials: { accessToken: hfToken },
+          private: false
+        });
+      } catch (_) {}
     }
 
     if (!silent) {
@@ -1004,6 +1008,15 @@ function renderReferenceTagsGrid() {
   });
 }
 
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = (err) => reject(err);
+    reader.readAsDataURL(file);
+  });
+}
+
 async function uploadSingleReferenceFileToHf(file, suggestedTag) {
   const hfUser = (userCredentials.hf_username || setHfUsername.value || "").trim();
   const hfToken = (userCredentials.hf_token || setHfToken.value || "").trim();
@@ -1013,23 +1026,56 @@ async function uploadSingleReferenceFileToHf(file, suggestedTag) {
     throw new Error("Add your Hugging Face Username & Token in Settings so reference images can be hosted.");
   }
 
+  const safeTag = (suggestedTag || "ref").replace(/[^a-zA-Z0-9_-]/g, "") || "ref";
+
+  // Strategy 1: Upload via Relay (/api/hf/upload-reference using Python HfApi)
+  const fileB64 = await fileToBase64(file);
+  let lastRelayError = "";
+  for (const base of getRelayBaseUrls()) {
+    try {
+      const resp = await fetch(`${base}/api/hf/upload-reference`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          hf_username: hfUser,
+          hf_token: hfToken,
+          dataset_name: dsName,
+          tag: safeTag,
+          filename: file.name || `${safeTag}.png`,
+          file_base64: fileB64
+        })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.url) return data.url;
+      } else {
+        const errJson = await resp.json().catch(() => ({}));
+        lastRelayError = errJson.detail || `HTTP ${resp.status}`;
+      }
+    } catch (e) {
+      lastRelayError = e.message;
+    }
+  }
+
+  // Strategy 2: Browser fallback using @huggingface/hub credentials object
   const repoId = await verifyAndEnsureHfDataset(true);
   if (!repoId) {
-    throw new Error("Could not initialize Hugging Face Dataset repository.");
+    throw new Error(lastRelayError || "Could not initialize Hugging Face Dataset repository.");
   }
 
   const ext = (file.name.split(".").pop() || "png").toLowerCase();
-  const safeTag = (suggestedTag || "ref").replace(/[^a-zA-Z0-9_-]/g, "") || "ref";
   const remotePath = `references/${safeTag}_${Date.now()}.${ext}`;
 
-  const { uploadFile } = await getHfHubModule();
-  await uploadFile({
+  const { uploadFiles } = await getHfHubModule();
+  await uploadFiles({
     repo: { type: "dataset", name: repoId },
-    accessToken: hfToken,
-    file: {
-      path: remotePath,
-      content: file
-    },
+    credentials: { accessToken: hfToken },
+    files: [
+      {
+        path: remotePath,
+        content: file
+      }
+    ],
     commitTitle: `Upload reference @${safeTag}`
   });
 
@@ -1433,58 +1479,62 @@ async function launchStoryToFilmPipeline(retryOnly = false) {
     return;
   }
 
-  // Ensure any pending reference image uploads finish first
-  for (const item of referenceTags) {
-    if (!item.url && item.fileObj) {
-      item.uploading = true;
-      renderReferenceTagsGrid();
-      item.url = await uploadSingleReferenceFileToHf(item.fileObj, item.tag);
-      item.uploading = false;
-      renderReferenceTagsGrid();
-    }
-  }
-
-  const randomSuffix = Math.random().toString(36).slice(2, 10);
-  currentJobId = `job_${Date.now()}_${randomSuffix}`;
-  if (!retryOnly) {
-    autoDownloadedSceneUrls.clear();
-    finalFilmPanel.style.display = "none";
-  }
-
   btnRunPipeline.disabled = true;
   btnCancelPipeline.disabled = false;
   updatePipelineStepRibbon("plan");
 
-  const cleanTagsPayload = referenceTags.map((t) => ({
-    tag: t.tag.replace(/^@+/, ""),
-    url: t.url
-  }));
-
-  const launchPayload = {
-    job_id: currentJobId,
-    firebase_project_id: firebaseConfig.projectId,
-    kaggle_username: userCredentials.kaggle_username,
-    kaggle_key: userCredentials.kaggle_key,
-    nvidia_api_key: userCredentials.nvidia_api_key,
-    nvidia_model: studioNvidiaModel.value || userCredentials.nvidia_model,
-    kie_api_key: userCredentials.kie_api_key,
-    hf_username: userCredentials.hf_username,
-    hf_token: userCredentials.hf_token,
-    hf_dataset_name: userCredentials.hf_dataset_name || "story-to-film-assets",
-    story,
-    reference_tags: cleanTagsPayload,
-    image_model: imageModelSelect.value,
-    image_resolution: imageResolutionSelect.value,
-    video_model: videoModelSelect.value,
-    aspect_ratio: aspectRatioSelect.value,
-    scene_duration: Number(sceneDurationSelect.value || 6),
-    video_quality: videoQualitySelect.value,
-    video_mode: videoModeSelect.value,
-    retry_scenes_only: retryOnly,
-    existing_scenes: retryOnly ? currentJobScenes : []
-  };
-
   try {
+    // Ensure any pending reference image uploads finish first
+    for (const item of referenceTags) {
+      if (!item.url && item.fileObj) {
+        item.uploading = true;
+        renderReferenceTagsGrid();
+        appendTerminalLog(`[HF Upload] Syncing reference image @${item.tag} to Hugging Face Dataset...`);
+        item.url = await uploadSingleReferenceFileToHf(item.fileObj, item.tag);
+        item.uploading = false;
+        renderReferenceTagsGrid();
+        appendTerminalLog(`[HF Upload] @${item.tag} synced: ${item.url}`);
+      }
+    }
+
+    const randomSuffix = Math.random().toString(36).slice(2, 10);
+    currentJobId = `job_${Date.now()}_${randomSuffix}`;
+    if (!retryOnly) {
+      autoDownloadedSceneUrls.clear();
+      finalFilmPanel.style.display = "none";
+    }
+
+    const cleanTagsPayload = referenceTags
+      .filter((t) => t.tag && t.url)
+      .map((t) => ({
+        tag: t.tag.replace(/^@+/, ""),
+        url: t.url
+      }));
+
+    const launchPayload = {
+      job_id: currentJobId,
+      firebase_project_id: firebaseConfig.projectId,
+      kaggle_username: userCredentials.kaggle_username,
+      kaggle_key: userCredentials.kaggle_key,
+      nvidia_api_key: userCredentials.nvidia_api_key,
+      nvidia_model: studioNvidiaModel.value || userCredentials.nvidia_model,
+      kie_api_key: userCredentials.kie_api_key,
+      hf_username: userCredentials.hf_username,
+      hf_token: userCredentials.hf_token,
+      hf_dataset_name: userCredentials.hf_dataset_name || "story-to-film-assets",
+      story,
+      reference_tags: cleanTagsPayload,
+      image_model: imageModelSelect.value,
+      image_resolution: imageResolutionSelect.value,
+      video_model: videoModelSelect.value,
+      aspect_ratio: aspectRatioSelect.value,
+      scene_duration: Number(sceneDurationSelect.value || 6),
+      video_quality: videoQualitySelect.value,
+      video_mode: videoModeSelect.value,
+      retry_scenes_only: retryOnly,
+      existing_scenes: retryOnly ? currentJobScenes : []
+    };
+
     appendTerminalLog(`[Launch] Creating private job ${currentJobId} in Firestore...`);
     const jobDocRef = doc(db, "automations", currentJobId);
     await setDoc(jobDocRef, {

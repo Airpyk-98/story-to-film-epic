@@ -24,7 +24,6 @@ from huggingface_hub import HfApi
 # =====================================================================
 # 1. CONFIGURATION & JOB PAYLOAD INJECTION
 # =====================================================================
-# Supports both environment variables and injected JOB_CONFIG_JSON
 JOB_CONFIG_RAW = os.environ.get("JOB_CONFIG_JSON", "__JOB_CONFIG_JSON_PLACEHOLDER__")
 try:
     if JOB_CONFIG_RAW and not JOB_CONFIG_RAW.startswith("__JOB_CONFIG"):
@@ -38,7 +37,6 @@ except Exception as e:
 FIRESTORE_PROJECT_ID = JOB_CONFIG.get("firebase_project_id") or os.environ.get("FIREBASE_PROJECT_ID", "story-to-film-epic-98")
 JOB_ID = JOB_CONFIG.get("job_id") or os.environ.get("JOB_ID", "job_demo")
 
-# User-scoped API credentials passed from Settings
 NVIDIA_API_KEY = JOB_CONFIG.get("nvidia_api_key") or os.environ.get("NVIDIA_API_KEY", "")
 NVIDIA_MODEL = JOB_CONFIG.get("nvidia_model") or os.environ.get("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")
 KIE_API_KEY = JOB_CONFIG.get("kie_api_key") or os.environ.get("KIE_API_KEY", "")
@@ -53,9 +51,8 @@ elif HF_USERNAME:
 else:
     HF_DATASET_REPO = os.environ.get("HF_DATASET_REPO", "pearlyoscar/story-to-film-assets")
 
-# Story & Model Presets
 STORY_TEXT = JOB_CONFIG.get("story", "")
-REFERENCE_TAGS = JOB_CONFIG.get("reference_tags", [])  # List of {"tag": "Dave", "url": "https://..."}
+REFERENCE_TAGS = JOB_CONFIG.get("reference_tags", [])
 IMAGE_MODEL = JOB_CONFIG.get("image_model", "nano-banana-2-lite")
 IMAGE_RESOLUTION = JOB_CONFIG.get("image_resolution", "1K")
 VIDEO_MODEL = JOB_CONFIG.get("video_model", "grok-imagine/image-to-video")
@@ -106,7 +103,6 @@ def sanitize_prompt_for_generation(prompt_text: str) -> str:
     cleaned = prompt_text
     for pattern, replacement in FLAGGED_WORD_REPLACEMENTS.items():
         cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
-    # Remove any accidental markdown code fences or control chars
     cleaned = re.sub(r"[`#*<>]", "", cleaned).strip()
     return cleaned
 
@@ -165,7 +161,7 @@ def cancellation_watchdog():
                 doc_fields = resp.json().get("fields", {})
                 cancel_req = doc_fields.get("cancel_requested", {}).get("booleanValue", False)
                 if cancel_req:
-                    append_log("🛑 Cancel signal received from user! Terminating all processes immediately...")
+                    append_log("[Cancel] Cancel signal received from user! Terminating all processes immediately...")
                     cancel_event.set()
                     for proc in list(active_subprocesses):
                         try:
@@ -189,7 +185,7 @@ def check_cancel():
 # =====================================================================
 def plan_scenes_with_nvidia(story: str, ref_tags: list, duration: int, aspect_ratio: str) -> list:
     """Uses the user's NVIDIA API Key and chosen NVIDIA model on Kaggle to plan scenes."""
-    append_log(f"🧠 Planning story scenes on Kaggle via NVIDIA NIM ({NVIDIA_MODEL})...")
+    append_log(f"[Stage 1] Planning story scenes on Kaggle via NVIDIA NIM ({NVIDIA_MODEL})...")
     update_firestore(8, f"Stage 1/4: Planning scenes with NVIDIA NIM ({NVIDIA_MODEL})...")
 
     tag_names = [f"@{t['tag']}" for t in ref_tags if t.get("tag")]
@@ -199,7 +195,7 @@ def plan_scenes_with_nvidia(story: str, ref_tags: list, duration: int, aspect_ra
 Your job is to read a user's story and split it into sequential, visually consistent cinematic scenes.
 
 CRITICAL RULES:
-1. Each scene MUST fit a {duration}-second duration — one clear action or emotional moment per scene.
+1. Each scene MUST fit a {duration}-second duration -- one clear action or emotional moment per scene.
 2. Uploaded Reference Tags available: {tag_list_str}.
    - Whenever ANY uploaded character, location, or prop appears in a scene, you MUST reference it using its exact @tag (e.g., {', '.join(tag_names[:3]) if tag_names else '@Hero'}).
    - ONLY use @tags from the provided list ({tag_list_str}). NEVER invent new @tags that were not uploaded.
@@ -260,16 +256,14 @@ Output the JSON array of planned scenes now:"""
         raise RuntimeError(f"NVIDIA NIM API Error ({resp.status_code}): {resp.text[:400]}")
 
     content = resp.json()["choices"][0]["message"]["content"].strip()
-    # Strip <think>...</think> blocks if using reasoning models like DeepSeek-R1 / Nemotron
     content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
 
-    # Extract JSON array
     match = re.search(r"\[.*\]", content, flags=re.DOTALL)
     if not match:
         raise RuntimeError(f"NVIDIA model did not return a JSON array. Raw output: {content[:300]}")
 
     raw_scenes = json.loads(match.group(0))
-    valid_tag_Lookup = {f"@{t['tag'].lstrip('@')}".lower(): f"@{t['tag'].lstrip('@')}" for t in ref_tags if t.get("tag")}
+    valid_tag_lookup = {f"@{t['tag'].lstrip('@')}".lower(): f"@{t['tag'].lstrip('@')}" for t in ref_tags if t.get("tag")}
 
     planned = []
     for idx, sc in enumerate(raw_scenes, start=1):
@@ -277,16 +271,15 @@ Output the JSON array of planned scenes now:"""
         vid_p = sanitize_prompt_for_generation(sc.get("video_prompt", ""))
         title = re.sub(r"[^a-zA-Z0-9 _-]", "", sc.get("title", f"Scene {idx}")).strip() or f"Scene {idx}"
 
-        # Detect all valid @tags used in prompts or tags_used
         detected_tags = []
         raw_tags = sc.get("tags_used", [])
         if isinstance(raw_tags, list):
             for rt in raw_tags:
                 norm = f"@{str(rt).lstrip('@')}".lower()
-                if norm in valid_tag_Lookup and valid_tag_Lookup[norm] not in detected_tags:
-                    detected_tags.append(valid_tag_Lookup[norm])
+                if norm in valid_tag_lookup and valid_tag_lookup[norm] not in detected_tags:
+                    detected_tags.append(valid_tag_lookup[norm])
 
-        for norm_low, canonical_tag in valid_tag_Lookup.items():
+        for norm_low, canonical_tag in valid_tag_lookup.items():
             if re.search(rf"{re.escape(norm_low)}\b", (img_p + " " + vid_p).lower()):
                 if canonical_tag not in detected_tags:
                     detected_tags.append(canonical_tag)
@@ -305,7 +298,7 @@ Output the JSON array of planned scenes now:"""
             "error": "",
         })
 
-    append_log(f"✅ Planned {len(planned)} scenes ({len(planned) * duration}s total runtime) via {NVIDIA_MODEL}.")
+    append_log(f"[Stage 1 Complete] Planned {len(planned)} scenes ({len(planned) * duration}s total runtime) via {NVIDIA_MODEL}.")
     return planned
 
 
@@ -347,7 +340,7 @@ def kie_create_and_poll(model_id: str, input_payload: dict, task_label: str, tim
         "input": input_payload,
     }
 
-    append_log(f"🚀 Dispatching {task_label} to Kie.ai [{model_id}]...")
+    append_log(f"[Kie.ai] Dispatching {task_label} to [{model_id}]...")
     resp = requests.post(create_url, headers=headers, json=body, timeout=30)
     data = resp.json() if resp.content else {}
 
@@ -359,8 +352,8 @@ def kie_create_and_poll(model_id: str, input_payload: dict, task_label: str, tim
     if not task_id:
         raise RuntimeError(f"Kie.ai did not return taskId: {data}")
 
-    append_log(f"⏳ Polling Kie.ai task {task_id} for {task_label}...")
-    poll_url = f"https://api.kie.ai/api/v1/jobs/recordInfo?taskId={ urllib.parse.quote(str(task_id)) }"
+    append_log(f"[Kie.ai] Polling task {task_id} for {task_label}...")
+    poll_url = f"https://api.kie.ai/api/v1/jobs/recordInfo?taskId={urllib.parse.quote(str(task_id))}"
     start_t = time.time()
 
     while time.time() - start_t < timeout_sec:
@@ -411,7 +404,6 @@ def kie_create_and_poll(model_id: str, input_payload: dict, task_label: str, tim
 def build_kie_image_input(model_id: str, prompt: str, ref_urls: list, aspect_ratio: str, resolution: str) -> dict:
     """Builds the exact model-specific `input` payload for Kie.ai Image Generation."""
     m = model_id.lower()
-    # NanoBanana 2 Lite / 2 / 2.1 / Pro / Edit family
     if "nano-banana" in m:
         inp = {
             "prompt": prompt,
@@ -424,7 +416,6 @@ def build_kie_image_input(model_id: str, prompt: str, ref_urls: list, aspect_rat
             inp["image_urls"] = ref_urls[:8]
         return inp
 
-    # Seedream 4.5 / 5.0 Lite / Pro family
     if "seedream" in m:
         inp = {
             "prompt": prompt,
@@ -436,7 +427,6 @@ def build_kie_image_input(model_id: str, prompt: str, ref_urls: list, aspect_rat
             inp["image_input"] = ref_urls[:6]
         return inp
 
-    # Flux Kontext / Flux-2 family
     if "flux" in m:
         inp = {
             "prompt": prompt,
@@ -447,7 +437,6 @@ def build_kie_image_input(model_id: str, prompt: str, ref_urls: list, aspect_rat
             inp["image_urls"] = ref_urls[:4]
         return inp
 
-    # Grok Imagine Text-to-Image or default
     inp = {
         "prompt": prompt,
         "aspect_ratio": aspect_ratio,
@@ -471,10 +460,8 @@ def build_kie_video_input(
     """Builds the exact model-specific `input` payload for Kie.ai Video Generation."""
     m = model_id.lower()
     dur_str = str(duration)
-    # Normalize 360p -> 480p for Kie.ai API compatibility where models expect 480p/720p/1080p
     api_res = "480p" if resolution == "360p" else (resolution or "720p")
 
-    # 1. Grok Imagine (grok-imagine/image-to-video)
     if "grok-imagine" in m:
         all_imgs = [scene_image_url] + [u for u in ref_urls if u != scene_image_url]
         return {
@@ -486,7 +473,6 @@ def build_kie_video_input(
             "mode": mode if mode in ("normal", "fun") else "normal",
         }
 
-    # 2. ByteDance Seedance 2.0 / 2.5 (bytedance/seedance-2, bytedance/seedance-2-5)
     if "seedance" in m:
         all_refs = [scene_image_url] + [u for u in ref_urls if u != scene_image_url]
         return {
@@ -498,7 +484,6 @@ def build_kie_video_input(
             "aspect_ratio": aspect_ratio,
         }
 
-    # 3. Alibaba Wan 3.0 / 2.7 / 2.5
     if "wan" in m:
         return {
             "prompt": prompt,
@@ -510,7 +495,6 @@ def build_kie_video_input(
             "enable_prompt_expansion": True,
         }
 
-    # 4. Kling 3.0 Omni / Kling 2.6 / Kling 2.1
     if "kling" in m:
         return {
             "prompt": prompt,
@@ -520,7 +504,6 @@ def build_kie_video_input(
             "aspect_ratio": aspect_ratio,
         }
 
-    # 5. Google Veo 3.1
     if "veo" in m:
         return {
             "prompt": prompt,
@@ -529,7 +512,6 @@ def build_kie_video_input(
             "aspect_ratio": aspect_ratio,
         }
 
-    # 6. Runway Gen-4 Turbo
     if "runway" in m:
         return {
             "prompt": prompt,
@@ -539,7 +521,6 @@ def build_kie_video_input(
             "quality": "720p" if dur_str == "10" else (api_res if api_res in ("720p", "1080p") else "720p"),
         }
 
-    # 7. Hailuo 02 / Default
     return {
         "prompt": prompt,
         "image_url": scene_image_url,
@@ -581,7 +562,6 @@ def stitch_videos_ffmpeg(video_paths: list, output_path: str, aspect_ratio: str,
         shutil.copyfile(video_paths[0], output_path)
         return
 
-    # Determine target canvas dimensions
     height_map = {"360p": 360, "480p": 480, "720p": 720, "1080p": 1080}
     h = height_map.get(quality, 720)
     if aspect_ratio == "9:16":
@@ -649,9 +629,8 @@ def stitch_videos_ffmpeg(video_paths: list, output_path: str, aspect_ratio: str,
 # =====================================================================
 def main():
     global scenes_state
-    append_log(f"🎬 Starting Story to Film Kaggle T4 Pipeline for Job: {JOB_ID}")
+    append_log(f"[Init] Starting Story to Film Kaggle T4 Pipeline for Job: {JOB_ID}")
 
-    # Start background cancellation watchdog
     watchdog = threading.Thread(target=cancellation_watchdog, daemon=True)
     watchdog.start()
 
@@ -664,20 +643,18 @@ def main():
         if not HF_TOKEN:
             raise RuntimeError("Missing Hugging Face Token. Please add your Hugging Face token in the Settings tab.")
 
-        # Ensure Hugging Face Dataset exists on the user's account
         update_firestore(4, f"Verifying / auto-creating Hugging Face Dataset ({HF_DATASET_REPO})...")
-        append_log(f"🤗 Ensuring Hugging Face Dataset '{HF_DATASET_REPO}' exists...")
+        append_log(f"[HF] Ensuring Hugging Face Dataset '{HF_DATASET_REPO}' exists...")
         hf_api = HfApi(token=HF_TOKEN)
         hf_api.create_repo(repo_id=HF_DATASET_REPO, repo_type="dataset", private=False, exist_ok=True)
-        append_log(f"✅ Hugging Face Dataset '{HF_DATASET_REPO}' ready.")
+        append_log(f"[HF] Hugging Face Dataset '{HF_DATASET_REPO}' ready.")
 
         work_dir = os.path.abspath(f"./work_{JOB_ID}")
         os.makedirs(work_dir, exist_ok=True)
 
-        # Stage 1: Plan Scenes (or load existing scenes if retrying failed ones)
         if RETRY_SCENES_ONLY and EXISTING_SCENES:
             scenes_state = EXISTING_SCENES
-            append_log(f"🔄 Retry mode active: inspecting {len(scenes_state)} existing scenes...")
+            append_log(f"[Retry] Inspecting {len(scenes_state)} existing scenes...")
         else:
             scenes_state = plan_scenes_with_nvidia(
                 story=STORY_TEXT,
@@ -697,7 +674,7 @@ def main():
             check_cancel()
             sc_num = scene["scene_number"]
             if scene.get("image_status") == "done" and scene.get("image_url"):
-                append_log(f"⏭ Scene {sc_num} image already complete, skipping.")
+                append_log(f"[Stage 2] Scene {sc_num} image already complete, skipping.")
                 continue
 
             pct = 18 + int((idx / total_scenes) * 32)
@@ -734,12 +711,12 @@ def main():
 
                 scene["image_url"] = hf_img_url
                 scene["image_status"] = "done"
-                append_log(f"🖼️ Scene {sc_num} image ready: {hf_img_url}")
+                append_log(f"[Stage 2] Scene {sc_num} image ready: {hf_img_url}")
                 update_firestore(pct + 2, f"Scene {sc_num}/{total_scenes} starting frame complete.")
             except Exception as img_err:
                 scene["image_status"] = "failed"
                 scene["error"] = str(img_err)
-                append_log(f"⚠️ Scene {sc_num} image failed: {img_err}")
+                append_log(f"[Stage 2 Warning] Scene {sc_num} image failed: {img_err}")
                 update_firestore(pct, f"Scene {sc_num} image failed, continuing remaining scenes...")
 
         # Stage 3: Sequential Video Generation (50% -> 86%)
@@ -799,12 +776,12 @@ def main():
                 scene["video_url"] = hf_vid_url
                 scene["video_status"] = "done"
                 local_scene_videos.append(local_vid)
-                append_log(f"🎞️ Scene {sc_num} video ready ({dl_name}): {hf_vid_url}")
+                append_log(f"[Stage 3] Scene {sc_num} video ready ({dl_name}): {hf_vid_url}")
                 update_firestore(pct + 3, f"Scene {sc_num}/{total_scenes} video finished & ready for download.")
             except Exception as vid_err:
                 scene["video_status"] = "failed"
                 scene["error"] = str(vid_err)
-                append_log(f"⚠️ Scene {sc_num} video failed: {vid_err}")
+                append_log(f"[Stage 3 Warning] Scene {sc_num} video failed: {vid_err}")
                 update_firestore(pct, f"Scene {sc_num} video failed, continuing remaining scenes...")
 
         # Stage 4: Stitch All Succeeded Scene Videos into Coherent Final Film (86% -> 100%)
@@ -813,7 +790,7 @@ def main():
             raise RuntimeError("No scene videos succeeded; cannot stitch final film. Check scene errors and retry.")
 
         update_firestore(88, f"Stage 4/4: Stitching {len(local_scene_videos)} scenes into a coherent film with FFmpeg...")
-        append_log(f"🎬 Stitching {len(local_scene_videos)} scene clips with FFmpeg on Kaggle T4...")
+        append_log(f"[Stage 4] Stitching {len(local_scene_videos)} scene clips with FFmpeg on Kaggle T4...")
 
         final_film_local = os.path.join(work_dir, "Complete_Story_Film.mp4")
         stitch_videos_ffmpeg(
@@ -824,7 +801,7 @@ def main():
         )
 
         update_firestore(95, "Uploading stitched master film to Hugging Face Datasets...")
-        append_log(f"☁️ Uploading stitched master film to {HF_DATASET_REPO}...")
+        append_log(f"[HF] Uploading stitched master film to {HF_DATASET_REPO}...")
         final_hf_url = upload_to_hf(
             hf_api,
             final_film_local,
@@ -836,14 +813,14 @@ def main():
         summary_msg = (
             f"Film complete! {succeeded_count}/{len(scenes_state)} scenes stitched into final movie."
             if failed_count == 0
-            else f"Film stitched ({succeeded_count}/{len(scenes_state)} scenes succeeded, {failed_count} failed — retry available)."
+            else f"Film stitched ({succeeded_count}/{len(scenes_state)} scenes succeeded, {failed_count} failed -- retry available)."
         )
-        append_log(f"🎉 {summary_msg} Master URL: {final_hf_url}")
+        append_log(f"[Complete] {summary_msg} Master URL: {final_hf_url}")
         update_firestore(100, summary_msg, status="completed", asset_url=final_hf_url)
 
     except Exception as e:
         err_str = str(e)
-        append_log(f"❌ Pipeline Error: {err_str}")
+        append_log(f"[Pipeline Error] {err_str}")
         update_firestore(0, f"Error: {err_str[:240]}", status="failed")
         sys.exit(1)
 

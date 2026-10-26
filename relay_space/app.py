@@ -10,6 +10,7 @@ Provides CORS-enabled endpoints for the Firebase Web App:
   5. POST /api/kaggle/launch       -> Pushes T4 GPU kernel (`NvidiaTeslaT4`) to user's own Kaggle account
 """
 
+import io
 import os
 import re
 import json
@@ -27,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from huggingface_hub import HfApi
 
-app = FastAPI(title="Story to Film Cloud Relay", version="1.0.0")
+app = FastAPI(title="Story to Film Cloud Relay", version="1.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -92,6 +93,7 @@ def health_check():
     return {
         "status": "online",
         "service": "Story to Film Cloud Relay",
+        "version": "1.1.0",
         "endpoints": [
             "/api/nvidia/models",
             "/api/kie/credits",
@@ -124,7 +126,6 @@ def get_nvidia_models(req: NvidiaModelsRequest):
             )
 
         data = resp.json().get("data", [])
-        # Filter out pure embedding / rerank / guard models so chat/LLM planning models appear cleanly
         excluded_keywords = ("embed", "rerank", "guard", "parse", "deplot", "kosmos", "paligemma", "clip")
         models = []
         for item in data:
@@ -202,7 +203,7 @@ def upload_reference_image(req: HfUploadRefRequest):
     hf_user = (req.hf_username or "").strip()
     hf_token = (req.hf_token or "").strip()
     ds_name = (req.dataset_name or "story-to-film-assets").strip().strip("/")
-    clean_tag = re.sub(r"[^a-zA-Z0-9_-]", "", (req.tag or "ref").strip())
+    clean_tag = re.sub(r"[^a-zA-Z0-9_-]", "", (req.tag or "ref").strip()) or "ref"
 
     if not hf_token:
         raise HTTPException(status_code=400, detail="Hugging Face Write token is required to upload reference images.")
@@ -215,7 +216,7 @@ def upload_reference_image(req: HfUploadRefRequest):
         repo_id = ds_name if "/" in ds_name else f"{hf_user}/{ds_name}"
         api.create_repo(repo_id=repo_id, repo_type="dataset", private=False, exist_ok=True)
 
-        b64_data = req.file_base64
+        b64_data = req.file_base64 or ""
         if "," in b64_data:
             b64_data = b64_data.split(",", 1)[1]
         raw_bytes = base64.b64decode(b64_data)
@@ -225,12 +226,22 @@ def upload_reference_image(req: HfUploadRefRequest):
             ext = ".png"
 
         remote_path = f"references/{clean_tag}_{int(time.time() * 1000)}{ext}"
-        api.upload_file(
-            path_or_fileobj=raw_bytes,
-            path_in_repo=remote_path,
-            repo_id=repo_id,
-            repo_type="dataset",
-        )
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_f:
+            tmp_f.write(raw_bytes)
+            tmp_file_path = tmp_f.name
+
+        try:
+            api.upload_file(
+                path_or_fileobj=tmp_file_path,
+                path_in_repo=remote_path,
+                repo_id=repo_id,
+                repo_type="dataset",
+            )
+        finally:
+            try:
+                os.remove(tmp_file_path)
+            except Exception:
+                pass
         quoted_remote = "/".join(urllib.parse.quote(part) for part in remote_path.split("/"))
         resolve_url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{quoted_remote}"
         return {
@@ -254,23 +265,25 @@ def launch_kaggle_worker(req: KaggleLaunchRequest):
         raise HTTPException(status_code=500, detail="kaggle_executor.py template missing on relay.")
 
     temp_dir = tempfile.mkdtemp(prefix=f"stf_{req.job_id}_")
+    kaggle_cfg_dir = tempfile.mkdtemp(prefix=f"kgcfg_{req.job_id}_")
     try:
         with open(EXECUTOR_TEMPLATE_PATH, "r", encoding="utf-8") as f:
             script_code = f.read()
 
-        job_config = req.dict()
-        # Inject serialized job config directly into the Kaggle executor script
-        escaped_json = json.dumps(job_config)
+        job_config = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+        escaped_json = json.dumps(job_config, ensure_ascii=True)
         script_code = script_code.replace(
             '"__JOB_CONFIG_JSON_PLACEHOLDER__"',
             repr(escaped_json),
         )
+        # Ensure pure ASCII in script_code so Windows cp1252 open() inside Kaggle CLI never fails
+        script_code_ascii = script_code.encode("ascii", "backslashreplace").decode("ascii")
 
         worker_py_path = os.path.join(temp_dir, "kaggle_executor.py")
         with open(worker_py_path, "w", encoding="utf-8") as f:
-            f.write(script_code)
+            f.write(script_code_ascii)
 
-        kernel_slug = f"story-to-film-worker"
+        kernel_slug = "story-to-film-worker"
         kernel_meta = {
             "id": f"{kg_user}/{kernel_slug}",
             "title": "Story to Film Worker",
@@ -281,7 +294,6 @@ def launch_kaggle_worker(req: KaggleLaunchRequest):
             "enable_gpu": "true",
             "enable_tpu": "false",
             "machine_shape": "NvidiaTeslaT4",
-            "accelerator": "nvidiaTeslaT4",
             "enable_internet": "true",
             "dataset_sources": [],
             "competition_sources": [],
@@ -293,32 +305,41 @@ def launch_kaggle_worker(req: KaggleLaunchRequest):
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(kernel_meta, f, indent=2)
 
+        # Write isolated kaggle.json in kaggle_cfg_dir so stale ~/.kaggle/access_token never conflicts
+        kj_path = os.path.join(kaggle_cfg_dir, "kaggle.json")
+        with open(kj_path, "w", encoding="utf-8") as f:
+            json.dump({"username": kg_user, "key": kg_key}, f)
+
+        if kg_key.startswith("KGAT_"):
+            tok_path = os.path.join(kaggle_cfg_dir, "access_token")
+            with open(tok_path, "w", encoding="utf-8") as f:
+                f.write(kg_key)
+
         env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["KAGGLE_CONFIG_DIR"] = kaggle_cfg_dir
         env["KAGGLE_USERNAME"] = kg_user
         env["KAGGLE_KEY"] = kg_key
-        # Also support KAGGLE_API_TOKEN for newer KGAT_ tokens
         if kg_key.startswith("KGAT_"):
             env["KAGGLE_API_TOKEN"] = kg_key
 
-        # Try pushing with --accelerator NvidiaTeslaT4 first, fallback to standard push if CLI version differs
-        cmd_with_accel = ["kaggle", "kernels", "push", "-p", temp_dir, "--accelerator", "NvidiaTeslaT4"]
-        res = subprocess.run(cmd_with_accel, env=env, capture_output=True, text=True, timeout=60)
-        if res.returncode != 0 and "unrecognized arguments: --accelerator" in (res.stderr + res.stdout):
-            cmd_std = ["kaggle", "kernels", "push", "-p", temp_dir]
-            res = subprocess.run(cmd_std, env=env, capture_output=True, text=True, timeout=60)
+        cmd = ["kaggle", "kernels", "push", "-p", temp_dir]
+        res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60)
+        output_str = ((res.stdout or "") + "\n" + (res.stderr or "")).strip()
 
-        output_str = (res.stdout or "") + "\n" + (res.stderr or "")
-        if res.returncode != 0:
+        if res.returncode != 0 or "error" in output_str.lower() and "successfully pushed" not in output_str.lower():
             raise HTTPException(
                 status_code=400,
-                detail=f"Kaggle Kernel Push Failed: {output_str.strip()[:400]}",
+                detail=f"Kaggle Kernel Push Failed: {output_str[:400]}",
             )
 
         return {
             "status": "ok",
             "kernel_id": f"{kg_user}/{kernel_slug}",
             "kernel_url": f"https://www.kaggle.com/code/{kg_user}/{kernel_slug}",
-            "cli_output": output_str.strip(),
+            "cli_output": output_str,
         }
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(kaggle_cfg_dir, ignore_errors=True)
