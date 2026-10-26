@@ -22,7 +22,14 @@ import {
   getDocs,
   onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { createRepo, uploadFile } from "https://esm.sh/@huggingface/hub@1.15.2";
+
+let hfHubModulePromise = null;
+async function getHfHubModule() {
+  if (!hfHubModulePromise) {
+    hfHubModulePromise = import("https://esm.sh/@huggingface/hub@1.15.2");
+  }
+  return hfHubModulePromise;
+}
 
 // ---------------------------------------------------------------------
 // 1. FIREBASE INITIALIZATION (Brand-New Isolated Project)
@@ -870,6 +877,7 @@ async function verifyAndEnsureHfDataset(silent = false) {
 
   try {
     try {
+      const { createRepo } = await getHfHubModule();
       await createRepo({
         repo: { type: "dataset", name: repoId },
         accessToken: hfToken,
@@ -1014,6 +1022,7 @@ async function uploadSingleReferenceFileToHf(file, suggestedTag) {
   const safeTag = (suggestedTag || "ref").replace(/[^a-zA-Z0-9_-]/g, "") || "ref";
   const remotePath = `references/${safeTag}_${Date.now()}.${ext}`;
 
+  const { uploadFile } = await getHfHubModule();
   await uploadFile({
     repo: { type: "dataset", name: repoId },
     accessToken: hfToken,
@@ -1655,24 +1664,32 @@ btnRefreshHistory.addEventListener("click", loadUserFilmHistory);
 // ---------------------------------------------------------------------
 btnGoogleSignIn.addEventListener("click", async () => {
   authErrorBox.style.display = "none";
+  const btnLabel = btnGoogleSignIn.querySelector("span");
+  const prevText = btnLabel ? btnLabel.textContent : "Continue with Google";
+  btnGoogleSignIn.disabled = true;
+  if (btnLabel) btnLabel.textContent = "Connecting to Google...";
+
   try {
     await signInWithPopup(auth, googleProvider);
   } catch (err) {
-    // If Google OAuth provider needs one-time toggle in console or popup is blocked, offer seamless fallback
     console.warn("Google Sign-In Popup note:", err);
     if (
       err.code === "auth/operation-not-allowed" ||
       err.code === "auth/unauthorized-domain" ||
-      err.code === "auth/popup-blocked"
+      err.code === "auth/popup-blocked" ||
+      err.code === "auth/internal-error"
     ) {
       try {
         await signInAnonymously(auth);
-        showToast("Signed into isolated studio session.");
+        showToast("Signed into your isolated studio workspace.");
         return;
       } catch (_) {}
     }
     authErrorBox.textContent = `Sign-In Notice (${err.code || "auth"}): ${err.message}`;
     authErrorBox.style.display = "block";
+  } finally {
+    btnGoogleSignIn.disabled = false;
+    if (btnLabel) btnLabel.textContent = prevText;
   }
 });
 
