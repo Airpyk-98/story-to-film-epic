@@ -1,0 +1,7 @@
+.firebase/
+node_modules/
+__pycache__/
+*.pyc
+work_*/
+.env
+.env.local

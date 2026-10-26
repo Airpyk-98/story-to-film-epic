@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Story to Film — Autonomous AI Cinema Studio</title>
+  <meta name="description" content="Turn written stories into consistent, stitched cinema scenes on Kaggle T4 GPU using NVIDIA NIM and Kie.ai.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <!-- =================================================================
+       AUTHENTICATION GATE (MULTI-USER GOOGLE SIGN-IN)
+       ================================================================= -->
+  <div id="authGate" class="auth-gate">
+    <div class="auth-card">
+      <div class="auth-brand-row">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
+            <line x1="7" y1="2" x2="7" y2="22"></line>
+            <line x1="17" y1="2" x2="17" y2="22"></line>
+            <line x1="2" y1="12" x2="22" y2="12"></line>
+            <line x1="2" y1="7" x2="7" y2="7"></line>
+            <line x1="2" y1="17" x2="7" y2="17"></line>
+            <line x1="17" y1="17" x2="22" y2="17"></line>
+            <line x1="17" y1="7" x2="22" y2="7"></line>
+          </svg>
+        </div>
+        <span class="brand-name">Story to Film</span>
+      </div>
+
+      <h1 class="auth-title">Autonomous Story-to-Cinema Pipeline</h1>
+      <p class="auth-desc">
+        Sign in with your Google account to access your private studio workspace. Your API credentials, reference characters, and generated films remain isolated to your account.
+      </p>
+
+      <div class="auth-highlights">
+        <div class="highlight-item">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          <span>Zero-pause Kaggle T4 execution: Plan, Images, Videos &amp; FFmpeg Stitch in one run</span>
+        </div>
+        <div class="highlight-item">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          <span>Private per-user credentials for NVIDIA NIM, Kie.ai, Kaggle &amp; Hugging Face</span>
+        </div>
+        <div class="highlight-item">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          <span>Real-time Kie.ai credit balance &amp; dynamic model preset cost estimator</span>
+        </div>
+      </div>
+
+      <button type="button" id="btnGoogleSignIn" class="btn btn-primary btn-full">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M21.35 11.1h-9.17v2.73h6.51c-.33 1.81-1.5 3.34-3.2 4.37v3.62h5.18c3.03-2.79 4.78-6.9 4.78-11.72 0-.8-.08-1.57-.23-2.3z"/>
+          <path fill="currentColor" d="M12.18 22c4.32 0 7.95-1.43 10.6-3.88l-5.18-3.62c-1.43.96-3.27 1.53-5.42 1.53-4.17 0-7.7-2.81-8.96-6.6H-2.1v3.73C.54 18.4 5.94 22 12.18 22z" opacity="0.85"/>
+        </svg>
+        <span>Continue with Google</span>
+      </button>
+
+      <div id="authErrorBox" class="field-error" role="alert" style="display: none;"></div>
+    </div>
+  </div>
+
+  <!-- =================================================================
+       MAIN APPLICATION SHELL (VISIBLE WHEN SIGNED IN)
+       ================================================================= -->
+  <div id="appShell" class="app-shell" style="display: none;">
+    <!-- Top Navigation Bar -->
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand-group">
+          <div class="brand-mark" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
+              <line x1="7" y1="2" x2="7" y2="22"></line>
+              <line x1="17" y1="2" x2="17" y2="22"></line>
+              <line x1="2" y1="12" x2="22" y2="12"></line>
+            </svg>
+          </div>
+          <div>
+            <span class="brand-name">Story to Film</span>
+            <span class="brand-tag">Kaggle T4 Studio</span>
+          </div>
+        </div>
+
+        <!-- Primary View Navigation -->
+        <nav class="main-nav" aria-label="Primary Navigation">
+          <button type="button" class="nav-tab active" data-tab="studio">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+            <span>Film Studio</span>
+          </button>
+          <button type="button" class="nav-tab" data-tab="history">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+            <span>My Private Films</span>
+          </button>
+          <button type="button" class="nav-tab" data-tab="settings">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            <span>Settings &amp; Keys</span>
+          </button>
+        </nav>
+
+        <!-- User & Credit Status Bar -->
+        <div class="topbar-actions">
+          <div class="credit-pill" id="headerCreditPill" title="Your personal Kie.ai credit balance">
+            <span class="credit-label">Kie.ai Credits:</span>
+            <strong class="credit-value tabular" id="headerCreditValue">--</strong>
+            <button type="button" id="btnHeaderRefreshCredit" class="icon-btn-sm" aria-label="Refresh Kie.ai credit balance" title="Check Balance">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            </button>
+          </div>
+
+          <div class="user-chip">
+            <img id="userAvatar" class="user-avatar" src="" alt="User profile" style="display: none;">
+            <span id="userNameDisplay" class="user-name">User</span>
+            <button type="button" id="btnSignOut" class="btn-ghost-sm" title="Sign Out">Sign Out</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- ===============================================================
+         TAB 1: FILM STUDIO (INPUT -> PLAN -> IMAGES -> VIDEOS & STITCH)
+         =============================================================== -->
+    <main id="tab-studio" class="tab-panel active">
+      <div class="container">
+        <!-- Pipeline Stage Indicator -->
+        <section class="step-ribbon" aria-label="Pipeline Progress Stages">
+          <div class="step-item active" id="stepInd-input">
+            <span class="step-dot">1</span>
+            <div class="step-meta">
+              <span class="step-name">Input &amp; @Tags</span>
+              <span class="step-sub">Story &amp; character refs</span>
+            </div>
+          </div>
+          <div class="step-divider"></div>
+          <div class="step-item" id="stepInd-plan">
+            <span class="step-dot">2</span>
+            <div class="step-meta">
+              <span class="step-name">Plan Scenes</span>
+              <span class="step-sub">NVIDIA NIM on Kaggle</span>
+            </div>
+          </div>
+          <div class="step-divider"></div>
+          <div class="step-item" id="stepInd-images">
+            <span class="step-dot">3</span>
+            <div class="step-meta">
+              <span class="step-name">Scene Images</span>
+              <span class="step-sub">Consistent @tag frames</span>
+            </div>
+          </div>
+          <div class="step-divider"></div>
+          <div class="step-item" id="stepInd-videos">
+            <span class="step-dot">4</span>
+            <div class="step-meta">
+              <span class="step-name">Videos &amp; Film Stitch</span>
+              <span class="step-sub">Kie.ai + FFmpeg master</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Missing Credentials Alert Banner -->
+        <div id="missingCredsBanner" class="notice-banner" style="display: none;">
+          <div class="notice-content">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            <span>Configure your personal <strong>NVIDIA</strong>, <strong>Kie.ai</strong>, <strong>Kaggle</strong>, and <strong>Hugging Face</strong> credentials in the Settings tab before launching a film run.</span>
+          </div>
+          <button type="button" id="btnGoToSettings" class="btn btn-secondary btn-sm">Open Settings</button>
+        </div>
+
+        <div class="studio-grid">
+          <!-- LEFT COLUMN: STORY, REFERENCE IMAGES & MODEL CONFIGURATION -->
+          <div class="studio-col-form">
+            <form id="storyForm" novalidate>
+              <!-- 1. Story Input Section -->
+              <section class="panel">
+                <div class="panel-header">
+                  <h2>Story or Script</h2>
+                  <span id="draftSaveIndicator" class="save-badge">Draft saved</span>
+                </div>
+                <p class="panel-helper">
+                  Paste your full story or script. The Kaggle worker will split it into timed cinematic scenes, enforce safety phrasing so zero prompts get flagged, and stitch all scenes into a coherent film.
+                </p>
+                <div class="field-group">
+                  <label for="storyInput" class="sr-only">Story or Script</label>
+                  <textarea
+                    id="storyInput"
+                    rows="7"
+                    placeholder="Example: @Dave and @Mary stand inside the @Laboratory examining a glowing crystalline sphere. Suddenly, the sphere levitates above the table as golden light fills the room..."
+                    required
+                  ></textarea>
+                </div>
+              </section>
+
+              <!-- 2. Reference Images Multi-Upload (@Tags) -->
+              <section class="panel">
+                <div class="panel-header">
+                  <h2>Reference Images (@Tags)</h2>
+                  <span class="tag-counter tabular" id="tagCountBadge">0 tags</span>
+                </div>
+                <p class="panel-helper">
+                  Upload characters, environments, or props. Assign each a unique single-word tag (no spaces, e.g., <code>Dave</code>, <code>Mary</code>, <code>School</code>). Reference them in your story or let the planner bind them automatically.
+                </p>
+
+                <div class="upload-dropzone" id="refDropzone">
+                  <input type="file" id="refFileInput" accept="image/png,image/jpeg,image/webp" multiple class="file-input-hidden">
+                  <div class="dropzone-inner">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    <div class="dropzone-text">
+                      <strong>Select or drop reference images</strong>
+                      <span>PNG, JPG, or WebP — uploaded to your Hugging Face Dataset</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="tagValidationError" class="field-error" role="alert" style="display: none;"></div>
+
+                <!-- Thumbnails & Tag Inputs Grid -->
+                <div id="refTagsGrid" class="ref-tags-grid"></div>
+              </section>
+
+              <!-- 3. Models, Dynamic Presets & Real-Time Kie.ai Credit Cost -->
+              <section class="panel">
+                <div class="panel-header">
+                  <h2>Models &amp; Scene Presets</h2>
+                  <span class="cost-summary-badge tabular" id="perSceneCostBadge">44 Credits / scene</span>
+                </div>
+
+                <!-- Planning AI Model (NVIDIA NIM) -->
+                <div class="field-group">
+                  <div class="label-row">
+                    <label for="studioNvidiaModel">Scene Planner AI (NVIDIA NIM on Kaggle)</label>
+                    <span class="cost-tag free">Included via NVIDIA Key</span>
+                  </div>
+                  <select id="studioNvidiaModel" class="select-control"></select>
+                </div>
+
+                <div class="two-col-fields">
+                  <!-- Image Model (Kie.ai) -->
+                  <div class="field-group">
+                    <div class="label-row">
+                      <label for="imageModelSelect">Image Model (Kie.ai)</label>
+                      <span class="cost-tag tabular" id="imageModelCreditTag">4 Credits / img</span>
+                    </div>
+                    <select id="imageModelSelect" class="select-control"></select>
+                  </div>
+
+                  <!-- Dynamic Image Resolution Preset -->
+                  <div class="field-group">
+                    <label for="imageResolutionSelect">Image Resolution</label>
+                    <select id="imageResolutionSelect" class="select-control"></select>
+                  </div>
+                </div>
+
+                <div class="two-col-fields">
+                  <!-- Video Model (Kie.ai) -->
+                  <div class="field-group">
+                    <div class="label-row">
+                      <label for="videoModelSelect">Video Model (Kie.ai)</label>
+                      <span class="cost-tag tabular" id="videoModelCreditTag">60 Credits / clip</span>
+                    </div>
+                    <select id="videoModelSelect" class="select-control"></select>
+                  </div>
+
+                  <!-- Dynamic Video Mode / Tier Preset -->
+                  <div class="field-group">
+                    <label for="videoModeSelect">Generation Mode</label>
+                    <select id="videoModeSelect" class="select-control"></select>
+                  </div>
+                </div>
+
+                <div class="three-col-fields">
+                  <!-- Aspect Ratio -->
+                  <div class="field-group">
+                    <label for="aspectRatioSelect">Aspect Ratio</label>
+                    <select id="aspectRatioSelect" class="select-control"></select>
+                  </div>
+
+                  <!-- Scene Duration -->
+                  <div class="field-group">
+                    <label for="sceneDurationSelect">Scene Duration</label>
+                    <select id="sceneDurationSelect" class="select-control"></select>
+                  </div>
+
+                  <!-- Video Quality / Resolution -->
+                  <div class="field-group">
+                    <label for="videoQualitySelect">Video Quality</label>
+                    <select id="videoQualitySelect" class="select-control"></select>
+                  </div>
+                </div>
+
+                <!-- Live Kie.ai Credit Cost Estimator Breakdown -->
+                <div class="credit-breakdown-box" aria-live="polite">
+                  <div class="credit-breakdown-row">
+                    <span>Starting Frame Image (<strong id="summaryImgModelName">NanoBanana 2 Lite</strong>):</span>
+                    <strong class="tabular" id="summaryImgCredits">4 Credits / scene</strong>
+                  </div>
+                  <div class="credit-breakdown-row">
+                    <span>Scene Video Animation (<strong id="summaryVidModelName">Grok Imagine</strong>):</span>
+                    <strong class="tabular" id="summaryVidCredits">60 Credits / scene</strong>
+                  </div>
+                  <div class="credit-breakdown-row total">
+                    <span>Estimated Total per Scene (<span id="summaryEstScenes">~4 scenes</span>):</span>
+                    <strong class="tabular" id="summaryTotalCredits">64 Credits / scene (~256 Credits total)</strong>
+                  </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="action-row">
+                  <button type="submit" id="btnRunPipeline" class="btn btn-primary btn-lg">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    <span>Run Story to Film on Kaggle T4</span>
+                  </button>
+                  <button type="button" id="btnCancelPipeline" class="btn btn-danger btn-lg" disabled>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
+                    <span>Cancel</span>
+                  </button>
+                </div>
+              </section>
+            </form>
+          </div>
+
+          <!-- RIGHT COLUMN: LIVE EXECUTION STATUS, FINAL FILM PLAYER & SCENE STORYBOARD -->
+          <div class="studio-col-monitor">
+            <!-- Real-Time Execution Progress & Terminal -->
+            <section class="panel">
+              <div class="panel-header">
+                <h2>Kaggle T4 Live Execution</h2>
+                <span class="status-badge" id="jobStatusBadge">IDLE</span>
+              </div>
+
+              <div class="progress-block">
+                <div class="progress-meta">
+                  <span id="liveMilestoneText" class="milestone-label">Ready to launch uninterrupted Story to Film pipeline.</span>
+                  <span id="liveProgressPct" class="progress-pct tabular">0%</span>
+                </div>
+                <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressBarAria">
+                  <div class="progress-fill" id="liveProgressFill" style="width: 0%;"></div>
+                </div>
+              </div>
+
+              <div class="terminal-wrapper">
+                <div class="terminal-bar">
+                  <span>Kaggle Worker Stream</span>
+                  <div class="terminal-actions">
+                    <a id="kaggleKernelLink" href="#" target="_blank" rel="noopener" class="terminal-link" style="display: none;">View Kernel</a>
+                    <button type="button" id="btnClearLogs" class="terminal-clear">Clear</button>
+                  </div>
+                </div>
+                <div id="terminalConsole" class="terminal-console" aria-live="polite">
+                  <div class="log-line">[System] Story to Film studio ready. Select models and click Run.</div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Final Stitched Film Output Card (Visible when Completed) -->
+            <section id="finalFilmPanel" class="panel highlight-panel" style="display: none;">
+              <div class="panel-header">
+                <h2>Final Stitched Coherent Film</h2>
+                <span class="status-badge completed" id="finalSummaryStats">Complete</span>
+              </div>
+              <p class="panel-helper">
+                All scenes have been normalized and stitched together on Kaggle T4 using FFmpeg and saved to your Hugging Face Dataset.
+              </p>
+
+              <div class="video-stage">
+                <video id="masterVideoPlayer" controls playsinline preload="metadata" class="master-video"></video>
+              </div>
+
+              <div class="asset-url-bar">
+                <input type="text" id="masterAssetUrlInput" class="url-readonly" readonly aria-label="Hugging Face Master Film URL">
+                <button type="button" id="btnCopyMasterUrl" class="btn btn-secondary">Copy Asset URL</button>
+              </div>
+
+              <div class="film-action-bar">
+                <a id="btnDownloadMasterFilm" href="#" download="Complete_Story_Film.mp4" target="_blank" rel="noopener" class="btn btn-primary">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  <span>Download Final Film</span>
+                </a>
+                <button type="button" id="btnDownloadAllScenes" class="btn btn-secondary">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                  <span>Download All Scene Clips Again</span>
+                </button>
+                <button type="button" id="btnRetryFailedScenes" class="btn btn-secondary" style="display: none;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                  <span>Retry Failed Scenes</span>
+                </button>
+              </div>
+            </section>
+
+            <!-- Live Scene Storyboard & Auto-Download Tracker -->
+            <section class="panel">
+              <div class="panel-header">
+                <h2>Scene Storyboard &amp; Live Clips</h2>
+                <span id="storyboardCountLabel" class="tag-counter tabular">0 scenes</span>
+              </div>
+              <p class="panel-helper">
+                Each scene's starting image and animated clip appear here as Kaggle finishes them. Individual scene clips automatically download as <code>1.Scene 1 - Title.mp4</code> upon completion.
+              </p>
+
+              <div id="scenesStoryboardGrid" class="scenes-storyboard">
+                <div class="empty-state">
+                  <p>No active scenes yet. Launch a Story to Film run to stream planned scenes, reference frames, and rendered video clips here.</p>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ===============================================================
+         TAB 2: MY PRIVATE FILMS (USER-SCOPED JOB HISTORY)
+         =============================================================== -->
+    <section id="tab-history" class="tab-panel" style="display: none;">
+      <div class="container">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>My Private Films &amp; Runs</h2>
+            <button type="button" id="btnRefreshHistory" class="btn btn-secondary btn-sm">Refresh</button>
+          </div>
+          <p class="panel-helper">
+            Only you can view and replay films generated under your Google account.
+          </p>
+          <div id="historyListContainer" class="history-list">
+            <div class="empty-state"><p>Loading your film history...</p></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===============================================================
+         TAB 3: SETTINGS & PERSISTENT USER CREDENTIALS
+         =============================================================== -->
+    <section id="tab-settings" class="tab-panel" style="display: none;">
+      <div class="container container-narrow">
+        <form id="settingsForm" class="settings-stack" novalidate>
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Personal API Credentials &amp; Compute Routing</h2>
+              <span id="settingsSaveStatus" class="save-badge">Encrypted to your UID</span>
+            </div>
+            <p class="panel-helper">
+              Every credential below is stored privately inside your personal Firestore document (<code>/users/{uid}/settings/credentials</code>) and is never shared with other users.
+            </p>
+
+            <!-- 1. Kie.ai API Key + Live Credit Balance Check -->
+            <div class="settings-section">
+              <h3>Kie.ai Image &amp; Video Generation</h3>
+              <p class="field-helper">
+                Used on Kaggle to run Grok Imagine, Seedance 2.0 / 2.5, Wan 3.0, Kling 3.0, NanoBanana 2 Lite, and Pro models.
+              </p>
+
+              <div class="field-group">
+                <label for="setKieApiKey">Kie.ai API Key (Unique to your account)</label>
+                <div class="input-action-row">
+                  <input type="password" id="setKieApiKey" placeholder="Enter your Kie.ai Bearer API Key..." autocomplete="off">
+                  <button type="button" id="btnToggleKieKey" class="btn btn-secondary btn-sm">Show</button>
+                  <button type="button" id="btnCheckKieBalance" class="btn btn-primary btn-sm">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                    <span>Check Balance</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="balance-card" id="kieBalanceCard">
+                <div>
+                  <span class="balance-title">Available Kie.ai Credit Balance</span>
+                  <span class="balance-sub" id="kieBalanceTimestamp">Click "Check Balance" to query live credits</span>
+                </div>
+                <div class="balance-number tabular" id="kieBalanceDisplay">-- Credits</div>
+              </div>
+            </div>
+
+            <!-- 2. NVIDIA NIM API Key + Dynamic Model Catalog Loader -->
+            <div class="settings-section">
+              <h3>NVIDIA NIM Scene Planning Engine</h3>
+              <p class="field-helper">
+                Input your NVIDIA API key (<code>nvapi-...</code>), click <strong>Load All NVIDIA Models</strong> to fetch the complete live catalog, and select your preferred model. Inference runs on the Kaggle server.
+              </p>
+
+              <div class="field-group">
+                <label for="setNvidiaApiKey">NVIDIA API Key</label>
+                <div class="input-action-row">
+                  <input type="password" id="setNvidiaApiKey" placeholder="nvapi-..." autocomplete="off">
+                  <button type="button" id="btnToggleNvidiaKey" class="btn btn-secondary btn-sm">Show</button>
+                  <button type="button" id="btnLoadNvidiaModels" class="btn btn-primary btn-sm">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>
+                    <span>Load All NVIDIA Models</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <div class="label-row">
+                  <label for="setNvidiaModelSelect">Preferred NVIDIA Planning Model</label>
+                  <span id="nvidiaModelCountBadge" class="cost-tag tabular">Curated + Live Catalog</span>
+                </div>
+                <select id="setNvidiaModelSelect" class="select-control"></select>
+              </div>
+            </div>
+
+            <!-- 3. Kaggle Compute Routing -->
+            <div class="settings-section">
+              <h3>Kaggle T4 GPU Compute Account</h3>
+              <p class="field-helper">
+                Routes the kernel push (<code>story-to-film-worker</code> with <code>NvidiaTeslaT4</code>) directly to your own Kaggle account.
+              </p>
+
+              <div class="two-col-fields">
+                <div class="field-group">
+                  <label for="setKaggleUsername">Kaggle Username</label>
+                  <input type="text" id="setKaggleUsername" placeholder="e.g. ikechukwuebiringa" autocomplete="off">
+                </div>
+                <div class="field-group">
+                  <label for="setKaggleKey">Kaggle API Key / Token</label>
+                  <div class="input-action-row">
+                    <input type="password" id="setKaggleKey" placeholder="Your Kaggle key from kaggle.json" autocomplete="off">
+                    <button type="button" id="btnToggleKaggleKey" class="btn btn-secondary btn-sm">Show</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. Hugging Face Dataset Storage -->
+            <div class="settings-section">
+              <h3>Hugging Face Dataset Storage</h3>
+              <p class="field-helper">
+                Stores your reference tag images, scene clips, and final stitched films. If the dataset repository does not exist on your account, it is created automatically on execution.
+              </p>
+
+              <div class="three-col-fields">
+                <div class="field-group">
+                  <label for="setHfUsername">HF Username</label>
+                  <input type="text" id="setHfUsername" placeholder="e.g. pearlyoscar" autocomplete="off">
+                </div>
+                <div class="field-group">
+                  <label for="setHfToken">HF Write Token (<code>hf_...</code>)</label>
+                  <input type="password" id="setHfToken" placeholder="hf_..." autocomplete="off">
+                </div>
+                <div class="field-group">
+                  <label for="setHfDatasetName">Dataset Name</label>
+                  <input type="text" id="setHfDatasetName" placeholder="story-to-film-assets" value="story-to-film-assets">
+                </div>
+              </div>
+
+              <div class="input-action-row" style="margin-top: 8px;">
+                <button type="button" id="btnVerifyHfDataset" class="btn btn-secondary btn-sm">
+                  Verify &amp; Auto-Create Dataset Now
+                </button>
+                <span id="hfVerifyStatusText" class="field-helper"></span>
+              </div>
+            </div>
+
+            <!-- 5. Cloud Relay Endpoint (Pre-configured to HF Space Relay) -->
+            <div class="settings-section">
+              <h3>Cloud Relay Dispatcher URL</h3>
+              <p class="field-helper">
+                Bridges browser requests to Kaggle CLI, NVIDIA model listing, and Kie.ai balance checks without CORS restrictions.
+              </p>
+              <div class="field-group">
+                <label for="setRelayUrl">Relay Endpoint URL</label>
+                <input type="url" id="setRelayUrl" value="http://localhost:7860">
+              </div>
+            </div>
+
+            <div class="action-row">
+              <button type="submit" id="btnSaveSettings" class="btn btn-primary btn-lg">
+                Save All Settings Persistently
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- Toast Notification Area -->
+    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+  </div>
+</body>
+</html>
